@@ -102,8 +102,9 @@ class ExaminerShell(Cmd):
         self.volume = vol
         self.do_cd("/")
         self.volname = name
-        self.prompt = "(%s-%s) %s " % (self.deviceName, self.volname, self.curdir)
-    
+        #self.prompt = "(%s-%s) %s " % (self.deviceName, self.volname, self.curdir)
+	self.prompt = "(%s-%s) %s " % (self.deviceName.encode("utf-8"), self.volname, self.curdir)    
+
     def do_info(self, p):
         pprint(self.device_infos)
         
