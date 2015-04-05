@@ -101,11 +101,7 @@ def search_plist(directory, matchDict):
         try:
             d = plistlib.readPlist(p)
             ok = True
-            print matchDict
-            print matchDict.items()
             for k,v in matchDict.items():
-		print d.get(k)
-		print v
                 if d.get(k) != v:
                     ok = False
                     break

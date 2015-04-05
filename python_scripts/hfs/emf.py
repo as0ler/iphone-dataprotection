@@ -73,7 +73,7 @@ class EMFFile(HFSFile):
                 clear += AESdecryptCBC(ciphertext[i*0x1000:(i+1)*0x1000], self.filekey,iv)
                 self.decrypt_offset += 0x1000
         return clear
-
+    
     def decryptFile(self):
         self.decrypt_offset = 0
         bs = self.volume.blockSize
@@ -104,9 +104,9 @@ class EMFVolume(HFSVolume):
             self.keybag = Keybag.createWithPlist(device_infos)
         except:
             raise #Exception("Invalid keyfile")
-
+        
+        self.decrypted = (self.header.finderInfo[3] == FLAG_DECRYPTED) 
         rootxattr =  self.getXattr(kHFSRootParentID, "com.apple.system.cprotect")
-        self.decrypted = (self.header.finderInfo[3] == FLAG_DECRYPTED)
         self.cp_major_version = None
         self.cp_root = None
         if rootxattr == None:
@@ -114,11 +114,11 @@ class EMFVolume(HFSVolume):
         else:
             self.cp_root = cp_root_xattr.parse(rootxattr)
             ver = self.cp_root.major_version
-            print "cprotect version : %d (iOS %d)" % (ver, 4 + int(ver != 2))
+            print "cprotect version : %d" % ver
             assert self.cp_root.major_version == 2 or self.cp_root.major_version == 4
             self.cp_major_version = self.cp_root.major_version
         self.keybag = loadKeybagFromVolume(self, device_infos)
-
+            
     def ivForLBA(self, lba, add=True):
         iv = ""
         if add:
@@ -131,20 +131,20 @@ class EMFVolume(HFSVolume):
                 lba = lba >> 1;
             iv += struct.pack("<L", lba)
         return iv
-
+    
     def getFileKeyForCprotect(self, cp):
         if self.cp_major_version == None:
             self.cp_major_version = struct.unpack("<H", cp[:2])[0]
         cprotect = cprotect_xattr.parse(cp)
         return self.keybag.unwrapKeyForClass(cprotect.persistent_class, cprotect.persistent_key)
-
+    
     def getFileKeyForFileId(self, fileid):
         cprotect = self.getXattr(fileid, "com.apple.system.cprotect")
         if cprotect == None:
             return None
         return self.getFileKeyForCprotect(cprotect)
 
-    def readFile(self, path, outFolder="./", returnString=False):
+    def readFile_old_api(self, path, outFolder="./", returnString=False):
         k,v = self.catalogTree.getRecordFromPath(path)
         if not v:
             print "File %s not found" % path
@@ -161,14 +161,30 @@ class EMFVolume(HFSVolume):
         f = EMFFile(self, v.data.dataFork, v.data.fileID, filekey)
         if returnString:
             return f.readAllBuffer()
-        f.readAll(outFolder + os.path.basename(path))
+        output = open(outFolder + os.path.basename(path), "wb")
+        f.readAll(output)
+        output.close()
         return True
 
+    def readFileByRecord(self, key, record, output):
+        assert record.recordType == kHFSPlusFileRecord
+        cprotect = self.getXattr(record.data.fileID, "com.apple.system.cprotect")
+        if cprotect == None or not self.cp_root or self.decrypted:
+            #print "cprotect attr not found, reading normally"
+            return super(EMFVolume, self).readFileByRecord(key, record, output)
+        filekey = self.getFileKeyForCprotect(cprotect)
+        if not filekey:
+            print "Cannot unwrap file key for file %d protection_class=%d" % (record.data.fileID, cprotect_xattr.parse(cprotect).persistent_class)
+            return
+        f = EMFFile(self, record.data.dataFork, record.data.fileID, filekey)
+        f.readAll(output)
+        return True
+    
     def flagVolume(self, flag):
         self.header.finderInfo[3] = flag
         h = HFSPlusVolumeHeader.build(self.header)
         return self.bdev.write(0x400, h)
-
+        
     def decryptAllFiles(self):
         if self.header.finderInfo[3] == FLAG_DECRYPTING:
             print "Volume is half-decrypted, aborting (finderInfo[3] == FLAG_DECRYPTING)"
@@ -209,7 +225,7 @@ class EMFVolume(HFSVolume):
             print k
             for v in self.protected_dict[k]: print "\t",v
             print ""
-
+            
     def inspectXattr(self, k, v):
         if getString(k) == "com.apple.system.cprotect" and k.fileID != kHFSRootParentID:
             c = cprotect_xattr.parse(v.data)

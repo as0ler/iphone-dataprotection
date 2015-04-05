@@ -1,3 +1,4 @@
+#!/usr/bin/python
 from backups.backup3 import decrypt_backup3
 from backups.backup4 import MBDB
 from keystore.keybag import Keybag
@@ -46,7 +47,7 @@ def extract_backup(backup_path, output_path, password=""):
         mbdb.extract_backup(output_path)
         
         print "You can decrypt the keychain using the following command : "
-        print "python keychain_tool.py -d %s %s" % (output_path + "/keychain-backup.plist", output_path + "/Manifest.plist")
+        print "python keychain_tool.py -d \"%s\" \"%s\"" % (output_path + "/KeychainDomain/keychain-backup.plist", output_path + "/Manifest.plist")
 
 def extract_all():
     if sys.platform == "win32":
@@ -72,7 +73,12 @@ def main():
     if len(sys.argv) >= 3:
         output_path = sys.argv[2]
 
-    extract_backup(backup_path, output_path)
+    if backup_path == "icloud":
+        from icloud.backup import download_backup
+        print "Downloading iCloud backup"
+        download_backup(None, None, output_path)
+    else:
+        extract_backup(backup_path, output_path)
 
 if __name__ == "__main__":
     main()

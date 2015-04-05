@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdint.h>
+#include <sys/sysctl.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
 #include "IOAESAccelerator.h"
@@ -14,7 +15,7 @@
 uint8_t lockers[960]={0};
 uint8_t lwvm[80]={0};
 
-CFDictionaryRef device_info(int socket, CFDictionaryRef request)
+CFMutableDictionaryRef device_info(int socket, CFDictionaryRef request)
 {
     uint8_t dkey[40]={0};
     uint8_t emf[36]={0};
@@ -30,7 +31,7 @@ CFDictionaryRef device_info(int socket, CFDictionaryRef request)
     
     get_device_infos(out);
     
-    CFMutableDictionaryRef nand = FSDGetInfo(0);
+    CFMutableDictionaryRef nand = FSDGetInfo();
     if (nand != NULL)
         CFDictionaryAddValue(out, CFSTR("nand"), nand);
 
@@ -54,15 +55,19 @@ CFDictionaryRef device_info(int socket, CFDictionaryRef request)
 
             if(aes_key_unwrap(&ctx, dkey, dkey, 32/8))
                 printf("FAIL unwrapping DKey with key 0x835\n");
+            else
+                addHexaString(out, CFSTR("DKey"), dkey, 32);
         }
         if (!AppleEffaceableStorage__getLockerFromBytes(LOCKER_EMF, lockers, 960, emf, 36))
         {
             doAES(&emf[4], &emf[4], 32, kIOAESAcceleratorCustomMask, key89B, NULL, kIOAESAcceleratorDecrypt, 128);
+            addHexaString(out, CFSTR("EMF"), &emf[4], 32);
         }
         else if (!AppleEffaceableStorage__getLockerFromBytes(LOCKER_LWVM, lockers, 960, lwvm, 0x50))
         {
             doAES(lwvm, lwvm, 0x50, kIOAESAcceleratorCustomMask, key89B, NULL, kIOAESAcceleratorDecrypt, 128);
             memcpy(&emf[4], &lwvm[32+16], 32);
+            addHexaString(out, CFSTR("EMF"), &emf[4], 32);
         }
     }
     
@@ -73,13 +78,11 @@ CFDictionaryRef device_info(int socket, CFDictionaryRef request)
     addHexaString(out, CFSTR("key835"), key835, 16);
     addHexaString(out, CFSTR("key89A"), key89A, 16);
     addHexaString(out, CFSTR("key89B"), key89B, 16);
-    addHexaString(out, CFSTR("EMF"), &emf[4], 32);
-    addHexaString(out, CFSTR("DKey"), dkey, 32);
     
     sysctlbyname("kern.bootargs", bootargs, &bootargs_len, NULL, 0);
     if (bootargs_len > 1)
     {
-        CFStringRef bootargsString = CFStringCreateWithBytes(kCFAllocatorDefault, bootargs, bootargs_len - 1, kCFStringEncodingASCII, 0);
+        CFStringRef bootargsString = CFStringCreateWithBytes(kCFAllocatorDefault, (const UInt8*) bootargs, bootargs_len - 1, kCFStringEncodingASCII, 0);
         CFDictionaryAddValue(out, CFSTR("kern.bootargs"), bootargsString);
         CFRelease(bootargsString);
     }

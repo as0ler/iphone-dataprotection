@@ -50,6 +50,7 @@ class Keybag(object):
         self.wrap = None
         self.deviceKey = None
         self.unlocked = False
+        self.passcodeComplexity = 0
         self.attrs = {}
         self.classKeys = {}
         self.KeyBagKeys = None #DATASIGN blob
@@ -98,7 +99,12 @@ class Keybag(object):
             return None
         decryptedPlist = BPlistReader.plistWithString(decryptedPlist)
         blob = decryptedPlist["KeyBagKeys"].data
-        return Keybag.createWithDataSignBlob(blob, deviceKey)
+        kb = Keybag.createWithDataSignBlob(blob, deviceKey)
+        if decryptedPlist.has_key("OpaqueStuff"):
+            OpaqueStuff = BPlistReader.plistWithString(decryptedPlist["OpaqueStuff"].data)
+            kb.passcodeComplexity = OpaqueStuff.get("keyboardType")
+        return kb
+
     
     @staticmethod
     def createWithDataSignBlob(blob, deviceKey=None):
@@ -112,7 +118,10 @@ class Keybag(object):
         if len(keybag.get("SIGN", "")):
             hmackey = AESUnwrap(deviceKey, kb.attrs["HMCK"])
             #hmac key and data are swapped (on purpose or by mistake ?)
-            sigcheck = hmac.new(keybag["DATA"], hmackey, sha1).digest()
+            sigcheck = hmac.new(key=keybag["DATA"], msg=hmackey, digestmod=sha1).digest()
+            #fixed in ios 7
+            if kb.attrs["VERS"] >= 4:
+                sigcheck = hmac.new(key=hmackey, msg=keybag["DATA"], digestmod=sha1).digest()
             if sigcheck != keybag.get("SIGN", ""):
                 print "Keybag: SIGN check FAIL"
         return kb
@@ -145,14 +154,14 @@ class Keybag(object):
                 self.wrap = data
             elif tag == "UUID":
                 if currentClassKey:
-                    self.classKeys[currentClassKey["CLAS"]] = currentClassKey
+                    self.classKeys[currentClassKey["CLAS"] & 0xF] = currentClassKey
                 currentClassKey = {"UUID": data}
             elif tag in CLASSKEY_TAGS:
                 currentClassKey[tag] = data
             else:
                 self.attrs[tag] = data
         if currentClassKey:
-            self.classKeys[currentClassKey["CLAS"]] = currentClassKey
+            self.classKeys[currentClassKey["CLAS"] & 0xF] = currentClassKey
 
     def getPasscodekeyFromPasscode(self, passcode):
         if self.type == BACKUP_KEYBAG or self.type == OTA_KEYBAG:
@@ -210,6 +219,7 @@ class Keybag(object):
         return AESUnwrap(md, persistent_key[32:])
 
     def unwrapKeyForClass(self, clas, persistent_key, printError=True):
+        clas = clas & 0xF
         if not self.classKeys.has_key(clas) or not self.classKeys[clas].has_key("KEY"):
             if printError: print "Keybag key %d missing or locked" % clas
             return ""
@@ -241,7 +251,7 @@ class Keybag(object):
         print "-"*128
         for k, ck in self.classKeys.items():
             if k == 6: print ""
-            print "".join([PROTECTION_CLASSES.get(k).ljust(53),
+            print "".join([PROTECTION_CLASSES.get(k, "%d" % k).ljust(53),
                                           str(ck.get("WRAP","")).ljust(5),
                                           KEY_TYPES[ck.get("KTYP",0)].ljust(11),
                                           ck.get("KEY", "").encode("hex").ljust(65),
@@ -252,6 +262,5 @@ class Keybag(object):
         if self.unlocked:
             d = {}
             for ck in self.classKeys.values():
-                d["%d" % ck["CLAS"]] = ck.get("KEY","").encode("hex")
+                d["%d" % (ck["CLAS"] & 0xF)] = ck.get("KEY","").encode("hex")
             return d
-        

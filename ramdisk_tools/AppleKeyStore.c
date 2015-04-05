@@ -3,11 +3,14 @@
 #include <string.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CommonCrypto/CommonCryptor.h> 
+#include <CommonCrypto/CommonHMAC.h>
 #include "IOKit.h"
 #include "IOAESAccelerator.h"
 #include "AppleEffaceableStorage.h"
 #include "AppleKeyStore.h"
 #include "util.h"
+#include "bsdcrypto/rijndael.h"
+#include "bsdcrypto/key_wrap.h"
 
 CFDictionaryRef AppleKeyStore_loadKeyBag(const char* folder, const char* filename)
 {
@@ -103,7 +106,7 @@ CFDictionaryRef AppleKeyStore_loadKeyBag(const char* folder, const char* filenam
     CFPropertyListRef plist2 = CFPropertyListCreateWithData(kCFAllocatorDefault, data2, kCFPropertyListImmutable, NULL, &e);
     if (plist2 == NULL)
     {
-        fprintf(stderr, "AppleKeyStore_loadKeyBag failed to create plist, AES fail decryptedSize=%x?\n", decryptedSize);
+        fprintf(stderr, "AppleKeyStore_loadKeyBag failed to create plist, AES fail ? decryptedSize=%zx\n", decryptedSize);
         
         CFShow(e);
     }
@@ -131,7 +134,11 @@ int AppleKeyStoreKeyBagInit()
 int AppleKeyStoreKeyBagCreateWithData(CFDataRef data, uint64_t* keybagId)
 {
     uint32_t outCnt = 1;
-    return IOKit_call("AppleKeyStore",
+    uint32_t retcode = 0;
+    aes_key_wrap_ctx ctx;
+    uint8_t hmckkey[32] = {0};
+
+    retcode = IOKit_call("AppleKeyStore",
                       kAppleKeyStoreKeyBagCreateWithData,
                       NULL,
                       0,
@@ -142,7 +149,94 @@ int AppleKeyStoreKeyBagCreateWithData(CFDataRef data, uint64_t* keybagId)
                       NULL,
                       NULL
                       );
-    
+    if (retcode != 0xE00002C9)
+        return retcode;
+
+    //HAX to load new iOS 7 keybags on previous iOS kernels
+    printf("Trying to remove iOS 7 keybag tags before loading into AppleKeyStore\n");
+
+    aes_key_wrap_set_key(&ctx, IOAES_key835(), 16);
+
+    uint8_t* kbdata = (uint8_t*) CFDataGetBytePtr(data);
+
+    assert(((uint32_t*) kbdata)[0] == 'ATAD');
+    uint32_t data_length = CFSwapInt32BigToHost(((uint32_t*) kbdata)[1]);
+    uint8_t* kbdata_end = kbdata + 8 + data_length;
+
+    assert(data_length < CFDataGetLength(data));
+    //+ DATA header + SIGN header + SIGN payload
+    uint8_t* keybag2 = (uint8_t*) malloc(data_length + 8 + 8 + 20);
+
+    if (!keybag2)
+        return -1;
+
+    uint32_t off = 8;
+    kbdata += 8;
+
+    while (kbdata < kbdata_end)
+    {
+        uint32_t tag = CFSwapInt32BigToHost(((uint32_t*) kbdata)[0]);
+        uint32_t len = CFSwapInt32BigToHost(((uint32_t*) kbdata)[1]);
+        assert((kbdata + 8 + len) <= kbdata_end);
+
+        if (tag != 'VERS' &&
+            tag != 'TYPE' &&
+            tag != 'UUID' &&
+            tag != 'HMCK' &&
+            tag != 'WRAP' &&
+            tag != 'SALT' &&
+            tag != 'ITER' &&
+            tag != 'CLAS' &&
+            tag != 'KTYP' &&
+            tag != 'PBKY' &&
+            tag != 'WPKY')
+        {
+            printf("Removing unknown keybag tag %.4s\n", kbdata);
+        }
+        else
+        {
+            memcpy(keybag2 + off, kbdata, 8 + len);
+            off += (8 + len);
+        }
+        if (tag == 'HMCK')
+        {
+            assert(!aes_key_unwrap(&ctx, (const uint8_t*) &kbdata[8], hmckkey, 4));
+            printf("Unwrapped HMCK key\n");
+        }
+        kbdata += (8 + len);
+    }
+    uint32_t new_data_length = off - 8;
+    ((uint32_t*) keybag2)[0] = 'ATAD';
+    ((uint32_t*) keybag2)[1] = CFSwapInt32BigToHost(new_data_length);//fix DATA size
+
+    ((uint32_t*) &keybag2[off])[0] = 'NGIS';
+    ((uint32_t*) &keybag2[off])[1] = CFSwapInt32BigToHost(20);
+    off += 8;
+
+    printf("Fixing SIGN HMAC\n");
+
+    CCHmac(kCCHmacAlgSHA1,
+           (const void *) &keybag2[8],
+           new_data_length,
+           hmckkey,
+           sizeof(hmckkey),
+           &keybag2[off]);
+    off += 20;
+
+    outCnt = 1;
+    retcode = IOKit_call("AppleKeyStore",
+                      kAppleKeyStoreKeyBagCreateWithData,
+                      NULL,
+                      0,
+                      keybag2,
+                      off,
+                      keybagId,
+                      &outCnt,
+                      NULL,
+                      NULL
+                      );
+    free(keybag2);
+    return retcode;
 }
 
 int AppleKeyStoreKeyBagSetSystem(uint64_t keybagId)
@@ -205,6 +299,9 @@ KeyBag* AppleKeyStore_parseBinaryKeyBag(CFDataRef kb)
         
         if (p->tag == 'SREV') {
             keybag->version = CFSwapInt32BigToHost(p->data.intvalue);
+        }
+        else if (p->tag == 'EPYT') {
+            keybag->type = CFSwapInt32BigToHost(p->data.intvalue);
         }
         else if (p->tag == 'TLAS') {
             memcpy(keybag->salt, p->data.bytes, 20);

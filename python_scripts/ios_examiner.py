@@ -1,9 +1,11 @@
+#!/usr/bin/python
 from cmd import Cmd
 from firmware.img3 import Img3
 from hfs.emf import cprotect_xattr, PROTECTION_CLASSES
 from hfs.hfs import hfs_date
 from keystore.keybag import Keybag, PROTECTION_CLASSES
 from nand.carver import NANDCarver
+from nand.ppn_carver import PPNCarver
 from nand.nand import NAND
 from optparse import OptionParser
 from util import hexdump, makedirs, write_file, parsePlist, sizeof_fmt,\
@@ -12,7 +14,9 @@ from util.bruteforce import bruteforcePasscode
 from util.ramdiskclient import RamdiskToolClient
 import os
 import plistlib
+import sqlite3
 import struct
+import sys
 from pprint import pprint
 from keychain import keychain_load
 from nand.remote import IOFlashStorageKitClient
@@ -84,6 +88,10 @@ class ExaminerShell(Cmd):
         self.complete_plist = self._complete
         self.complete_xxd = self._complete
         self.image = image
+        if image.ppn and image.filename == "remote":
+            self.savepath = "."
+            print "Remote PPN device, use nand_dump + save, other commands will fail"
+            return
         self.system = image.getPartitionVolume(0)
         self.data = image.getPartitionVolume(1)
         self.volume = None
@@ -129,7 +137,8 @@ class ExaminerShell(Cmd):
         self.do_cd("/mobile/Media/DCIM/100APPLE")
         
     def do_keychain(self, p):
-        self.data.readFile("/Keychains/keychain-2.db")
+        #self.data.readFile("/Keychains/keychain-2.db")
+        self._pull__and_open_sqlitedb("/Keychains/keychain-2.db")
         keychain = keychain_load("keychain-2.db", self.data.keybag, self.image.device_infos["key835"].decode("hex"))
         keychain.print_all(False)
     
@@ -218,7 +227,10 @@ class ExaminerShell(Cmd):
         if not self.data.keybag.unlocked:
             print "Warning, keybag is not unlocked, some files will be inaccessible"
         if not self.carver:
-            self.carver = NANDCarver(self.data, self.image)
+            if self.image.ppn:
+                self.carver = PPNCarver(self.data, self.image)
+            else:
+                self.carver = NANDCarver(self.data, self.image)
         if False:#len(p):
             z =  self.volume.catalogTree.getLBAsHax()
             v = self.volume.getFileRecordForPath(self.curdir)
@@ -274,7 +286,9 @@ class ExaminerShell(Cmd):
         if len(t) > 1:
             hexdump(data[:int(t[1])])
         else:
-            hexdump(data)
+            hexdump(data[:0x200])
+            if len(data) > 0x200:
+                print "Output truncated to %d bytes" % 0x200
     
     def do_effaceable(self, p):
         print "Effaceable Lockers"
@@ -335,10 +349,69 @@ class ExaminerShell(Cmd):
         self.volume.bdev.dumpToFile(p.split()[0])
         
     def do_img3(self, p):
-        self.image.extract_img3s()
+        self.image.extract_img3s("./")
     
     def do_shsh(self, p):
         self.image.extract_shsh()
+
+    def _pull__and_open_sqlitedb(self, path):
+        outdir = "/tmp/"
+        self.volume.readFile(path, outdir)
+        self.volume.readFile(path + "-shm", outdir)
+        if self.volume.readFile(path + "-wal", outdir):
+            if sqlite3.sqlite_version < "3.7":
+                print "Python sqlite3 version %s < 3.7" % (sqlite3.sqlite_version)
+                print "Please update python sqlite dll to use this feature on iOS 6+ images (WAL)"
+                return
+        dbpath = os.path.join(outdir, os.path.basename(path))
+        print dbpath
+        return sqlite3.connect(dbpath)
+
+    def do_sms(self, p):
+        conn = self._pull__and_open_sqlitedb("/mobile/Library/SMS/sms.db")
+        if not conn: return
+        #http://linuxsleuthing.blogspot.fr/2012/10/whos-texting-ios6-smsdb.html
+        z = conn.execute("""SELECT
+            DATETIME(date + 978307200, 'unixepoch', 'localtime') as Date,
+              h.id as "Phone Number",
+                CASE is_from_me
+                WHEN 0 THEN "Received"
+                WHEN 1 THEN "Sent"
+                ELSE "Unknown"
+                  END as Type,
+              text as Text
+              FROM message m, handle h
+              WHERE h.rowid = m.handle_id
+              ORDER BY Date ASC;""")
+
+        print " ".join(["Date".ljust(20), "To/From".ljust(12), "Text"])
+        for row in z.fetchall():
+            print row[0].ljust(21) + row[1].ljust(13) + row[3][:80]
+
+    def do_contacts(self, p):
+        conn = self._pull__and_open_sqlitedb("/mobile/Library/AddressBook/AddressBook.sqlitedb")
+        if not conn: return
+        #https://gist.github.com/laacz/1180765
+        conn = sqlite3.connect("AddressBook.sqlitedb")
+        z = conn.execute("""select ABPerson.first,
+                                 ABPerson.last,
+                                 ABPerson.Organization as organization,
+                                 (select value from ABMultiValue where property = 4 and record_id = ABPerson.ROWID LIMIT 1) as email
+                                 from ABPerson
+                                order by ABPerson.ROWID;""")
+
+        print "".join(["First name".ljust(15), "Last name".ljust(15), "Organization".ljust(15), "Email"])
+        for row in z.fetchall():
+            row = map(str, row)
+            print row[0].ljust(15) + row[1].ljust(15) + row[2].ljust(15) + row[3]
+
+    def do_email(self, p):
+        conn = self._pull__and_open_sqlitedb("/mobile/Library/Mail/Protected Index")
+        #conn = self._pull__and_open_sqlitedb("/mobile/Library/Mail/Envelope Index")
+        z = conn.execute("SELECT message_id, sender, _to, subject from messages")
+        print "  ".join(map(lambda x:x.ljust(40), ["From", "To", "Subject"]))
+        for row in z.fetchall():
+            print "  ".join(map(lambda x:x.ljust(40)[:40], row[1:]))
 
     def do_debug(self,p):
         from IPython.Shell import IPShellEmbed
@@ -348,6 +421,15 @@ class ExaminerShell(Cmd):
 def main():
     parser = OptionParser(usage="%prog [options] nand_image.bin device_infos.plist")
     (options, args) = parser.parse_args()
+
+    if sys.platform == "darwin":
+        import readline
+        import rlcompleter
+        #fix tab complete on osx
+        if readline.__doc__ and "libedit" in readline.__doc__:
+            readline.parse_and_bind("bind ^I rl_complete")
+        else:
+            readline.parse_and_bind("tab: complete")
 
     if len(args) >= 2:
         plistname = args[1]
