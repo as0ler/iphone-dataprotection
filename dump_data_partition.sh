@@ -12,8 +12,8 @@ echo "Device UDID : $UDID"
 mkdir -p $UDID
 
 DATE=`date +"%Y%m%d-%H%M"`
-OUT1=$UDID/data_$DATE_disks1s1.dmg
-OUT2=$UDID/data_$DATE_disks1s2.dmg
+OUT1=$UDID/data_$DATE"_disks1s1.dmg"
+OUT2=$UDID/data_$DATE"_disks1s2.dmg"
 
 
 echo "Dumping data partition in $OUT1 ..."

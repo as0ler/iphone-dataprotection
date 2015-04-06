@@ -2,6 +2,32 @@ See http://code.google.com/p/iphone-dataprotection/wiki/README
 
 # Installation
 
+## Santoku Linux 
+
+- Install swig 
+
+`
+sudo apt-get install swig
+`
+
+- Install PIP
+
+`
+sudo apt-get install python-pip
+` 
+
+- Install Python dependencies
+
+`
+sudo pip install progressbar
+sudo pip install setuptools
+sudo pip install construct
+sudo pip install pyasn1
+
+`
+
+## OSX
+
 - Install swig
 
 `
