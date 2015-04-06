@@ -23,7 +23,6 @@ sudo pip install progressbar
 sudo pip install setuptools
 sudo pip install construct
 sudo pip install pyasn1
-
 `
 
 ## OSX
