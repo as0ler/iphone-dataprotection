@@ -80,6 +80,12 @@ def bf_system():
                     di.save()
                     keychain_blob = client.downloadFile("/mnt2/Keychains/keychain-2.db")
                     write_file("keychain-2.db", keychain_blob)
+		    #to fix the keychain downloading on iOS 7
+                    keychain_shm = client.downloadFile("/mnt2/Keychains/keychain-2.db-shm")
+                    write_file("keychain-2.db-shm", keychain_shm)
+                    keychain_wal = client.downloadFile("/mnt2/Keychains/keychain-2.db-wal")
+                    write_file("keychain-2.db-wal", keychain_wal)
+
                     print "Downloaded keychain database, use keychain_tool.py to decrypt secrets"
                     return
             print "Passcode not found!"
@@ -88,6 +94,12 @@ def bf_system():
     #keychain_blob =    client.downloadFile("/private/var/Keychains/keychain-2.db")
     keychain_blob = client.downloadFile("/mnt2/Keychains/keychain-2.db")
     write_file("keychain-2.db", keychain_blob)
+    #to fix the keychain downloading on iOS 7
+    keychain_shm = client.downloadFile("/mnt2/Keychains/keychain-2.db-shm")
+    write_file("keychain-2.db-shm", keychain_shm)
+    keychain_wal = client.downloadFile("/mnt2/Keychains/keychain-2.db-wal")
+    write_file("keychain-2.db-wal", keychain_wal)
+
     print "Downloaded keychain database, use keychain_tool.py to decrypt secrets"
 
 bf_system()
