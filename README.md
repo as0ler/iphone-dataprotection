@@ -38,6 +38,7 @@ sudo apt-get install python-pip
 - Install Python dependencies
 
 `
+
 sudo pip install progressbar
 
 sudo pip install setuptools
@@ -45,6 +46,7 @@ sudo pip install setuptools
 sudo pip install construct
 
 sudo pip install pyasn1
+
 `
 
 ## OSX
@@ -52,11 +54,13 @@ sudo pip install pyasn1
 
 - Download and install LDID
 `
+
 sudo mkdir -p /usr/local/bin
 
 curl -O http://networkpx.googlecode.com/files/ldid $ chmod +x ldid
 
 sudo mv ldid /usr/local/bin
+
 `
 
 - Verify codesign Allocate Tool
