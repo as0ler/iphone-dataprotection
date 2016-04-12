@@ -4,7 +4,7 @@ See http://code.google.com/p/iphone-dataprotection/wiki/README
 
 It works using OSX and the following:
 
-- Xcode 4.3 (xcode_43_lion.dmg) => Can be download from https://developer.apple.com/downloads/
+- Xcode 4.3 (xcode_43_lion.dmg)
 - SDK 5.0
 - iTunes 11.1.1
 - redsnow 0.9.15b3 (redsnow_mac_0.9.15b3) 
