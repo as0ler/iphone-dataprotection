@@ -40,7 +40,7 @@ sudo apt-get install python-pip
 ```
 sudo pip install progressbar
 sudo pip install setuptools
-sudo pip install construct
+sudo pip install construct==2.5.3
 sudo pip install pyasn1
 ```
 
